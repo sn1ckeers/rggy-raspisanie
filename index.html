@@ -284,6 +284,38 @@
       align-items: center;
     }
 
+    .group-label-right {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .btn-copy-link {
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.82rem;
+      padding: 2px 5px;
+      border-radius: var(--radius-sm);
+      transition: all 0.15s ease;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      text-transform: none;
+    }
+
+    .btn-copy-link:hover {
+      color: var(--primary);
+      background: var(--primary-light);
+      border-color: var(--primary);
+    }
+
+    .btn-copy-link:active {
+      transform: scale(0.92);
+    }
+
     .segmented-control {
       display: flex;
       background: var(--bg-input);
@@ -1102,7 +1134,10 @@
       <div class="control-group">
         <div class="control-label">
           <span>Группа</span>
-          <span id="groupBadge" style="color: var(--primary); font-weight: 700;">РК-11</span>
+          <div class="group-label-right">
+            <span id="groupBadge" style="color: var(--primary); font-weight: 700;">РК-11</span>
+            <button id="copyGroupLinkBtn" class="btn-copy-link" title="Скопировать прямую ссылку на эту группу" aria-label="Скопировать ссылку на группу">🔗</button>
+          </div>
         </div>
         <div class="segmented-control" role="tablist">
           <button class="segmented-btn active" data-group="РК-11" id="btnGroupRK11">
@@ -1285,10 +1320,41 @@
         return (today === 'ВОСКРЕСЕНЬЕ' || !ALL_DAYS.includes(today)) ? 'ПОНЕДЕЛЬНИК' : today;
       }
 
+      // Определение группы из URL (#rk-11 / #rk-12 или ?group=rk-11 / ?group=rk-12)
+      function getGroupFromUrl() {
+        try {
+          const rawHash = (window.location.hash || '').toLowerCase().replace('#', '').trim();
+          if (rawHash) {
+            if (rawHash.includes('11')) return 'РК-11';
+            if (rawHash.includes('12')) return 'РК-12';
+          }
+          const params = new URLSearchParams(window.location.search || '');
+          const gParam = (params.get('group') || params.get('g') || '').toLowerCase().trim();
+          if (gParam.includes('11')) return 'РК-11';
+          if (gParam.includes('12')) return 'РК-12';
+        } catch (e) {}
+        return null;
+      }
+
+      function getInitialGroup() {
+        // 1. Приоритет: ссылка (хэш в URL или параметр)
+        const fromUrl = getGroupFromUrl();
+        if (fromUrl) return fromUrl;
+
+        // 2. Приоритет: сохранённый выбор в памяти браузера
+        try {
+          const saved = localStorage.getItem(PREF_GROUP_KEY);
+          if (saved === 'РК-11' || saved === 'РК-12') return saved;
+        } catch (e) {}
+
+        // 3. По умолчанию
+        return 'РК-11';
+      }
+
       // --- STATE ---
       const state = {
-        group: localStorage.getItem(PREF_GROUP_KEY) || 'РК-11',
-        week: localStorage.getItem(PREF_WEEK_KEY) || detectDefaultWeek(),
+        group: getInitialGroup(),
+        week: detectDefaultWeek(),
         detectedCurrentWeek: null,
         selectedDay: getTodayDayName(),
         isLoading: false,
@@ -1307,6 +1373,7 @@
         btnGroupRK11: document.getElementById('btnGroupRK11'),
         btnGroupRK12: document.getElementById('btnGroupRK12'),
         groupBadge: document.getElementById('groupBadge'),
+        copyGroupLinkBtn: document.getElementById('copyGroupLinkBtn'),
         btnWeekUpper: document.getElementById('btnWeekUpper'),
         btnWeekLower: document.getElementById('btnWeekLower'),
         currentWeekNote: document.getElementById('currentWeekNote'),
@@ -1855,20 +1922,63 @@
         });
       }
 
-      function setGroup(group) {
+      function setGroup(group, updateUrl = true) {
+        if (group !== 'РК-11' && group !== 'РК-12') return;
         state.group = group;
-        localStorage.setItem(PREF_GROUP_KEY, group);
+        try {
+          localStorage.setItem(PREF_GROUP_KEY, group);
+        } catch (e) {}
+
         dom.btnGroupRK11.classList.toggle('active', group === 'РК-11');
         dom.btnGroupRK12.classList.toggle('active', group === 'РК-12');
         dom.groupBadge.textContent = group;
+
+        if (updateUrl) {
+          const targetHash = group === 'РК-11' ? '#rk-11' : '#rk-12';
+          if (window.location.hash !== targetHash) {
+            try {
+              if (window.history && window.history.replaceState) {
+                window.history.replaceState(null, '', targetHash);
+              } else {
+                window.location.hash = targetHash;
+              }
+            } catch (e) {}
+          }
+        }
+
         if (window.navigator && typeof window.navigator.vibrate === 'function') {
           try { window.navigator.vibrate(8); } catch (e) {}
         }
         renderSchedule();
       }
 
-      dom.btnGroupRK11.addEventListener('click', () => setGroup('РК-11'));
-      dom.btnGroupRK12.addEventListener('click', () => setGroup('РК-12'));
+      dom.btnGroupRK11.addEventListener('click', () => setGroup('РК-11', true));
+      dom.btnGroupRK12.addEventListener('click', () => setGroup('РК-12', true));
+
+      // Кнопка копирования прямой ссылки на выбранную группу
+      if (dom.copyGroupLinkBtn) {
+        dom.copyGroupLinkBtn.addEventListener('click', () => {
+          const targetHash = state.group === 'РК-11' ? '#rk-11' : '#rk-12';
+          const fullUrl = window.location.href.split('#')[0] + targetHash;
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(fullUrl).then(() => {
+              showToast(`📋 Ссылка на ${state.group} скопирована!`);
+            }).catch(() => {
+              showToast(`Ссылка: ${fullUrl}`);
+            });
+          } else {
+            showToast(`Ссылка: ${fullUrl}`);
+          }
+        });
+      }
+
+      // Отслеживание смены хэша в адресной строке браузера
+      window.addEventListener('hashchange', () => {
+        const fromUrl = getGroupFromUrl();
+        if (fromUrl && fromUrl !== state.group) {
+          setGroup(fromUrl, false);
+        }
+      });
 
       function setWeek(week, savePreference = true) {
         state.week = week;
